@@ -46,11 +46,44 @@ void main() {
 
     test('times out without a prompt', () async {
       final fake = FakeElm()..responsive = false;
-      final t = ElmTransport(fake, defaultTimeout: const Duration(milliseconds: 50));
+      final t = ElmTransport(fake,
+          defaultTimeout: const Duration(milliseconds: 50),
+          lateReplyWait: const Duration(milliseconds: 20));
       await expectLater(t.send('ATI'), throwsA(isA<ElmTimeoutException>()));
       // The queue keeps working afterwards.
       fake.responsive = true;
       expect(await t.send('ATE0'), 'OK');
+    });
+
+    test('a late reply after a timeout is not taken as the next reply', () async {
+      final fake = FakeElm(replies: {'ATRV': '14.1V', '222050': '7E9056220500384'});
+      fake.delays['222050'] = const Duration(milliseconds: 80);
+      final t = ElmTransport(fake,
+          minBusInterval: Duration.zero,
+          defaultTimeout: const Duration(milliseconds: 50),
+          lateReplyWait: const Duration(milliseconds: 200));
+      final elm = ElmClient(t);
+      expect(await elm.readVoltage(), 14.1);
+      await expectLater(t.send('222050'), throwsA(isA<ElmTimeoutException>()));
+      // The bus reply arrives after the timeout; ATRV must still get its own.
+      expect(await elm.readVoltage(), 14.1);
+      fake.delays.clear();
+      expect(await t.send('222050'), '7E9056220500384');
+      expect(await t.send('ATI'), 'OK');
+    });
+
+    test('a late reply that arrives before the next command is dropped', () async {
+      final fake = FakeElm(replies: {'ATI': 'ELM327 v2.2', 'ATRV': '13.9V'});
+      fake.delays['ATI'] = const Duration(milliseconds: 60);
+      final t = ElmTransport(fake,
+          defaultTimeout: const Duration(milliseconds: 30),
+          lateReplyWait: const Duration(seconds: 5));
+      await expectLater(t.send('ATI'), throwsA(isA<ElmTimeoutException>()));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final sw = Stopwatch()..start();
+      expect(await t.send('ATRV'), '13.9V');
+      // Nothing left to wait for, so no lateReplyWait delay.
+      expect(sw.elapsed, lessThan(const Duration(seconds: 1)));
     });
 
     test('spaces bus requests at least minBusInterval apart', () async {

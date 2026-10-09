@@ -23,6 +23,9 @@ class FakeElm implements ByteLink {
   /// When false, commands get no reply at all (to test timeouts).
   bool responsive = true;
 
+  /// Commands whose reply is held back this long (to test late replies).
+  final delays = <String, Duration>{};
+
   /// When true, writes throw, like a dropped BLE link.
   bool linkDown = false;
 
@@ -50,7 +53,7 @@ class FakeElm implements ByteLink {
       _emit(monitorLines!.map((l) => '$l\r').join());
       return;
     }
-    _emit('${handler?.call(cmd) ?? replies[cmd] ?? defaultReply}\r\r>');
+    _emit('${handler?.call(cmd) ?? replies[cmd] ?? defaultReply}\r\r>', delays[cmd]);
   }
 
   /// Lines ATMA streams until interrupted; null means ATMA replies like any
@@ -58,13 +61,15 @@ class FakeElm implements ByteLink {
   List<String>? monitorLines;
   bool _monitoring = false;
 
-  void _emit(String reply) {
+  void _emit(String reply, [Duration? delay]) {
     final data = ascii.encode(reply);
-    scheduleMicrotask(() {
+    void send() {
       for (var i = 0; i < data.length; i += chunkSize) {
         _incoming.add(data.sublist(i, i + chunkSize > data.length ? data.length : i + chunkSize));
       }
-    });
+    }
+
+    delay == null ? scheduleMicrotask(send) : Timer(delay, send);
   }
 
   @override

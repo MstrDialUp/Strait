@@ -15,6 +15,11 @@ enum LinkState { idle, scanning, connecting, connected, reconnecting, failed }
 /// Wait before each reconnect attempt; the last value repeats.
 const reconnectBackoff = [2, 5, 10, 20, 30];
 
+/// How often ATRV is re-read while connected, so the car-on reading never
+/// goes stale (the bus gate trusts a reading for 90 s). ATRV reads the
+/// adapter's supply pin and sends nothing on the CAN bus.
+const voltageRefresh = Duration(seconds: 30);
+
 /// Result of reading one known signal, for display next to the dash value.
 class SignalReading {
   SignalReading(this.signal, this.result, {this.value, this.error});
@@ -61,6 +66,7 @@ class ConnectController extends ChangeNotifier {
   UdsClient? _uds;
   StreamSubscription<List<ScanResult>>? _scanSub;
   StreamSubscription<BluetoothConnectionState>? _connSub;
+  Timer? _voltageTimer;
 
   /// The adapter to reconnect to after an unexpected drop.
   BluetoothDevice? _device;
@@ -152,6 +158,26 @@ class ConnectController extends ChangeNotifier {
     await elm.initialize();
     adapterId = await elm.adapterId();
     volts = await elm.readVoltage();
+    _voltageTimer?.cancel();
+    _voltageTimer = Timer.periodic(voltageRefresh, (_) => _refreshVoltage());
+  }
+
+  /// Re-reads ATRV in the background unless someone else (the ABRP link,
+  /// the recorder) read it recently. Leaves [error] alone.
+  Future<void> _refreshVoltage() async {
+    final elm = _elm;
+    if (elm == null || state != LinkState.connected) return;
+    final last = elm.transport.gate.lastReadAt;
+    if (!busy && (last == null || DateTime.now().difference(last) >= voltageRefresh)) {
+      try {
+        volts = await elm.readVoltage();
+      } catch (_) {
+        // A dropped link is handled by the reconnect logic.
+      }
+    } else {
+      volts = elm.transport.gate.lastVolts ?? volts;
+    }
+    notifyListeners();
   }
 
   /// After an unexpected drop, retries with [reconnectBackoff] until it
@@ -269,6 +295,8 @@ class ConnectController extends ChangeNotifier {
   }
 
   Future<void> _teardown() async {
+    _voltageTimer?.cancel();
+    _voltageTimer = null;
     await _connSub?.cancel();
     _connSub = null;
     final t = _transport;
@@ -287,6 +315,7 @@ class ConnectController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _voltageTimer?.cancel();
     _scanSub?.cancel();
     _teardown();
     super.dispose();

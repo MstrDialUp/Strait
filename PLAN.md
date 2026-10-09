@@ -259,8 +259,11 @@ While the phone is near the car the dongle is always advertising, so the app can
 - Around 13.0 V or higher means the DC-DC converter is running: the car is on or charging. Below that, the car is off.
 - Car on: start polling and uploading.
 - Implemented in `transport/bus_gate.dart`: every bus command (hex requests and `ATMA`) is refused unless the latest `ATRV` reading is ≥ 13.0 V and at most 90 s old. `AT` setup commands are never gated because they don't reach the bus.
-- Car off: send nothing on the bus. Re-check `ATRV` every 60 s, then disconnect BLE after 10 minutes.
+- Car off: send nothing on the bus. Re-check `ATRV` every 60 s, then disconnect BLE after 10 minutes. A car-on reading taken elsewhere (e.g. "Re-check voltage") ends the 60 s wait early.
+- While the ABRP link is polling, one low or unreadable `ATRV` pauses polling (nothing is sent on the bus) and is re-checked every 5 s; the car only counts as off after 3 such readings in a row. The link keeps a short event log on the ABRP tab saying why it called the car off.
+- The Connect screen re-reads `ATRV` every 30 s while connected (skipped if another screen read it in the last 30 s), so its car-on reading doesn't go stale after 90 s.
 - If a UDS request gets no answer, stop polling and fall back to the `ATRV` check.
+- If an adapter command times out, its late reply is discarded before the next command is sent (waiting up to 1 s), so replies can't get out of step with commands.
 - Phase 4 checks the vLinker FD+ sleep settings, and includes an overnight 12 V test with the dongle plugged in and the app installed.
 
 ---

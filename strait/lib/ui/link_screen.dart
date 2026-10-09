@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../abrp/credentials.dart';
+import '../abrp/live_poller.dart';
 import 'package:ocean_obd/app/app_settings.dart';
 import 'package:ocean_obd/util/units.dart';
 import 'link_controller.dart';
@@ -227,6 +228,7 @@ class _LinkScreenState extends State<LinkScreen> {
                       if (point.isCharging == true) point.isDcfc == true ? 'DC charging' : 'charging',
                       if (point.isParked != true && point.isCharging != true) 'driving',
                     ].join(', ')),
+                          if (poller != null && poller.events.isNotEmpty) _eventsTile(poller.events),
             ],
             const Divider(),
             OutlinedButton(
@@ -243,6 +245,26 @@ class _LinkScreenState extends State<LinkScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// The link's recent decisions, newest first, to see why it called the
+  /// car off.
+  Widget _eventsTile(List<LinkEvent> events) {
+    String time(DateTime t) => [t.hour, t.minute, t.second].map((n) => '$n'.padLeft(2, '0')).join(':');
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      title: Text('Link events (${events.length})'),
+      children: [
+        for (final e in events.reversed)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              SizedBox(width: 80, child: Text(time(e.at))),
+              Expanded(child: Text(e.message)),
+            ]),
+          ),
+      ],
     );
   }
 
