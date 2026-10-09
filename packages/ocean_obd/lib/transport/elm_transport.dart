@@ -27,12 +27,18 @@ class ElmTimeoutException implements Exception {
 /// `>` prompt. Every command passes [CommandPolicy] and, if it touches the
 /// bus, the [BusGate]. Bus requests are spaced at least [minBusInterval]
 /// apart (PLAN.md §4.5: roughly 10-12 requests per second).
+///
+/// When a command times out, the adapter may still send its reply later.
+/// That late reply is discarded (waiting up to [lateReplyWait] before the
+/// next command is written), so it can't be taken as the next command's
+/// reply and leave every reply after it one command behind.
 class ElmTransport {
   ElmTransport(
     this._link, {
     BusGate? gate,
     this.minBusInterval = const Duration(milliseconds: 85),
     this.defaultTimeout = const Duration(seconds: 3),
+    this.lateReplyWait = const Duration(seconds: 1),
   }) : gate = gate ?? BusGate() {
     _sub = _link.incoming.listen(_onBytes);
   }
@@ -41,12 +47,17 @@ class ElmTransport {
   final BusGate gate;
   final Duration minBusInterval;
   final Duration defaultTimeout;
+  final Duration lateReplyWait;
 
   late final StreamSubscription<List<int>> _sub;
   final _buffer = StringBuffer();
   Completer<String>? _pending;
   Future<void> _queue = Future.value();
   DateTime? _lastBusSend;
+
+  /// Set when a command timed out and its `>` prompt hasn't arrived yet.
+  bool _lateReplyOwed = false;
+  Completer<void>? _lateReply;
 
   /// Called with every command and reply, for logs and debugging.
   void Function(String line)? onTrace;
@@ -72,6 +83,7 @@ class ElmTransport {
   }
 
   Future<List<String>> _monitor(String cmd, CommandKind kind, Duration duration) async {
+    await _discardLateReply();
     await _beforeSend(cmd, kind);
     _buffer.clear();
     final completer = _pending = Completer<String>();
@@ -86,6 +98,7 @@ class ElmTransport {
     } on TimeoutException {
       reply = _clean(_buffer.toString());
       _pending = null;
+      _lateReplyOwed = true;
     }
     final lines = reply.split('\r').where((l) => l.isNotEmpty && l != 'STOPPED').toList();
     onTrace?.call('< ATMA: ${lines.length} lines');
@@ -103,7 +116,23 @@ class ElmTransport {
     _lastBusSend = DateTime.now();
   }
 
+  /// Waits for the prompt of a command that timed out, so its reply isn't
+  /// mistaken for the next command's.
+  Future<void> _discardLateReply() async {
+    if (!_lateReplyOwed) return;
+    final late = _lateReply = Completer<void>();
+    try {
+      await late.future.timeout(lateReplyWait);
+    } on TimeoutException {
+      onTrace?.call('< no late reply');
+    }
+    _lateReply = null;
+    _lateReplyOwed = false;
+    _buffer.clear();
+  }
+
   Future<String> _send(String cmd, CommandKind kind, Duration timeout) async {
+    await _discardLateReply();
     await _beforeSend(cmd, kind);
     _buffer.clear();
     final completer = _pending = Completer<String>();
@@ -116,6 +145,7 @@ class ElmTransport {
     } on TimeoutException {
       final partial = _buffer.toString();
       _pending = null;
+      _lateReplyOwed = true;
       onTrace?.call('< TIMEOUT ($partial)');
       throw ElmTimeoutException(cmd, partial);
     }
@@ -131,7 +161,14 @@ class ElmTransport {
         _buffer.clear();
         final p = _pending;
         _pending = null;
-        if (p != null && !p.isCompleted) p.complete(reply);
+        if (p != null && !p.isCompleted) {
+          p.complete(reply);
+        } else if (_lateReplyOwed) {
+          _lateReplyOwed = false;
+          onTrace?.call('< late reply discarded (${reply.replaceAll('\r', ' | ')})');
+          final late = _lateReply;
+          if (late != null && !late.isCompleted) late.complete();
+        }
       } else {
         _buffer.write(ch);
       }

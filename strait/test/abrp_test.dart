@@ -309,5 +309,126 @@ void main() {
       expect(timedOut, isTrue);
       expect(fake.sent.where((c) => !c.startsWith('AT')), isEmpty);
     });
+
+    const onReplies = {
+      '22EFF7': '7CA0562EFF7028F',
+      '222004': '7E907622004000052D0',
+      '222107': '7E9056221071010',
+      '222050': '7E9056220500300',
+      '223409': '7C907623409003B3350',
+    };
+
+    test('one low voltage reading does not turn the car off', () async {
+      final atrv = ['14.0V', '12.6V', '13.9V'];
+      var atrvCount = 0;
+      final fake = FakeElm(
+        replies: {...onReplies},
+        handler: (cmd) {
+          if (cmd != 'ATRV') return null;
+          final i = atrvCount++;
+          return atrv[i < atrv.length ? i : atrv.length - 1];
+        },
+      );
+      final uds = UdsClient(ElmClient(ElmTransport(fake, minBusInterval: Duration.zero)));
+      final poller = LivePoller(
+        uds: () => uds,
+        signals: table.signals,
+        state: VehicleState(),
+        intervalOf: (_) => const Duration(milliseconds: 20),
+        voltageEvery: const Duration(milliseconds: 30),
+        lowVoltageRecheck: const Duration(milliseconds: 5),
+      );
+      var everOff = false;
+      poller.onUpdate = () {
+        if (atrvCount > 0 && !poller.stats.carOn) everOff = true;
+      };
+      final done = poller.run();
+      await waitFor(() => atrvCount >= 4);
+      poller.stop();
+      await done;
+      expect(everOff, isFalse);
+      expect(poller.stats.events.map((e) => e.message),
+          contains(startsWith('12.6 V, below 13.0 V (1 of 3)')));
+      expect(poller.stats.events.map((e) => e.message), isNot(contains('Car off')));
+    });
+
+    test('three low readings in a row turn the car off, without bus traffic', () async {
+      var low = false;
+      final fake = FakeElm(
+        replies: {...onReplies},
+        handler: (cmd) => cmd == 'ATRV' ? (low ? '12.4V' : '14.0V') : null,
+      );
+      final uds = UdsClient(ElmClient(ElmTransport(fake, minBusInterval: Duration.zero)));
+      final poller = LivePoller(
+        uds: () => uds,
+        signals: table.signals,
+        state: VehicleState(),
+        intervalOf: (_) => const Duration(milliseconds: 20),
+        voltageEvery: const Duration(milliseconds: 30),
+        lowVoltageRecheck: const Duration(milliseconds: 5),
+        carOffRecheck: const Duration(seconds: 30),
+      );
+      final done = poller.run();
+      await waitFor(() => poller.stats.carOn && poller.stats.reads > 0);
+      low = true;
+      final atrvBefore = fake.sent.where((c) => c == 'ATRV').length;
+      await waitFor(() => !poller.stats.carOn);
+      final sentAfterOff = fake.sent.length;
+      expect(fake.sent.where((c) => c == 'ATRV').length - atrvBefore, 3);
+      expect(poller.stats.events.last.message, 'Car off');
+      // Nothing more goes out while it waits.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(fake.sent.length, sentAfterOff);
+      poller.stop();
+      await done;
+    });
+
+    test('a car-on reading from another screen ends the car-off wait', () async {
+      var on = false;
+      final fake = FakeElm(
+        replies: {...onReplies},
+        handler: (cmd) => cmd == 'ATRV' ? (on ? '14.0V' : '12.4V') : null,
+      );
+      final elm = ElmClient(ElmTransport(fake, minBusInterval: Duration.zero));
+      final uds = UdsClient(elm);
+      final poller = LivePoller(
+        uds: () => uds,
+        signals: table.signals,
+        state: VehicleState(),
+        intervalOf: (_) => const Duration(milliseconds: 20),
+        carOffRecheck: const Duration(minutes: 1),
+      );
+      final done = poller.run();
+      await waitFor(() => poller.stats.status.startsWith('Car off'));
+      on = true;
+      await elm.readVoltage(); // "Re-check voltage" on the Connect tab
+      await waitFor(() => poller.stats.carOn && poller.stats.reads > 0,
+          timeout: const Duration(seconds: 5));
+      poller.stop();
+      await done;
+    });
+
+    test('a gate closed elsewhere is re-checked, not taken as car off', () async {
+      final fake = FakeElm(replies: {'ATRV': '14.0V', ...onReplies});
+      final elm = ElmClient(ElmTransport(fake, minBusInterval: Duration.zero));
+      final uds = UdsClient(elm);
+      final poller = LivePoller(
+        uds: () => uds,
+        signals: table.signals,
+        state: VehicleState(),
+        intervalOf: (_) => const Duration(milliseconds: 20),
+      );
+      final done = poller.run();
+      await waitFor(() => poller.stats.reads > 0);
+      final atrv = fake.sent.where((c) => c == 'ATRV').length;
+      elm.transport.gate.close();
+      final reads = poller.stats.reads;
+      await waitFor(() => poller.stats.reads > reads + 2);
+      expect(poller.stats.carOn, isTrue);
+      expect(fake.sent.where((c) => c == 'ATRV').length, greaterThan(atrv));
+      expect(poller.stats.events.map((e) => e.message), isNot(contains('Car off')));
+      poller.stop();
+      await done;
+    });
   });
 }
