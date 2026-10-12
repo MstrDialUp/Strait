@@ -2,15 +2,15 @@
 /// recent `ATRV` reading shows the DC-DC converter running, or while the
 /// car is known to be driving.
 ///
-/// Driving counts as on because the 12 V supply can sit just under
-/// [onThresholdVolts] on the move (12.9 V seen on 2026-10-11). A speed of at
-/// least [movingKmh] (GPS, or the car's own speed reading) keeps the gate
-/// open for [motionHold] after the last such reading, so stops at lights
-/// don't close it. Speed can't be renewed once the car is parked, so this
-/// can't keep a parked car awake for longer than [motionHold].
+/// The 12 V supply sat at 12.9 V for a whole drive (2026-10-11), so the
+/// threshold is 12.8 V. Driving also counts as on: a speed of at least
+/// [movingKmh] from the car's own speed reading keeps the gate open for
+/// [motionHold] after the last such reading, so stops at lights don't close
+/// it. Speed can't be renewed once the car is parked, so this can't keep a
+/// parked car awake for longer than [motionHold].
 class BusGate {
   BusGate({
-    this.onThresholdVolts = 13.0,
+    this.onThresholdVolts = 12.8,
     this.maxReadingAge = const Duration(seconds: 90),
     this.movingKmh = 10,
     this.motionHold = const Duration(minutes: 2),

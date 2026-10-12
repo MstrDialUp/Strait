@@ -350,7 +350,7 @@ void main() {
       await done;
       expect(everOff, isFalse);
       expect(poller.stats.events.map((e) => e.message),
-          contains(startsWith('12.6 V, below 13.0 V (1 of 3)')));
+          contains(startsWith('12.6 V, below 12.8 V (1 of 3)')));
       expect(poller.stats.events.map((e) => e.message), isNot(contains('Car off')));
     });
 
@@ -433,33 +433,25 @@ void main() {
       await done;
     });
 
-    test('driving (GPS speed) polls although ATRV reads 12.9 V', () async {
-      final fake = FakeElm(replies: {'ATRV': '12.9V', ...onReplies});
-      final elm = ElmClient(ElmTransport(fake, minBusInterval: Duration.zero));
-      final uds = UdsClient(elm);
+    test('12.9 V (seen while driving) counts as on', () async {
+      final fake = FakeElm(replies: {'ATRV': '12.9V', ...parkedReplies});
+      final uds = UdsClient(ElmClient(ElmTransport(fake, minBusInterval: Duration.zero)));
       final state = VehicleState();
       final poller = LivePoller(
         uds: () => uds,
         signals: table.signals,
         state: state,
         intervalOf: (_) => const Duration(milliseconds: 20),
-        carOffRecheck: const Duration(minutes: 1),
       );
       final done = poller.run();
-      await waitFor(() => poller.stats.status.startsWith('Car off'));
-      expect(fake.sent.where((c) => !c.startsWith('AT')), isEmpty);
-      elm.transport.gate.recordSpeed(48); // a GPS fix, as LinkController feeds it
       await waitFor(() => state.value('soc') != null);
       expect(poller.stats.carOn, isTrue);
-      expect(poller.stats.driving, isTrue);
-      expect(state.snapshot(), isNotNull);
-      expect(poller.stats.events.map((e) => e.message),
-          contains(startsWith('Driving (48 km/h): polling although ATRV reads 12.9 V')));
+      expect(poller.stats.driving, isFalse);
       poller.stop();
       await done;
     });
 
-    test("the car's own speed keeps the link on when ATRV drops under 13 V", () async {
+    test("the car's own speed keeps the link on when ATRV drops under 12.8 V", () async {
       var volts = '14.0V';
       final fake = FakeElm(
         replies: {...onReplies},
@@ -476,7 +468,7 @@ void main() {
       );
       final done = poller.run();
       await waitFor(() => poller.stats.carOn && uds.elm.transport.gate.moving); // 65.5 km/h read
-      volts = '12.9V';
+      volts = '12.5V';
       final atrv = fake.sent.where((c) => c == 'ATRV').length;
       await waitFor(() => fake.sent.where((c) => c == 'ATRV').length >= atrv + 4);
       expect(poller.stats.carOn, isTrue);

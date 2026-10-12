@@ -152,7 +152,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       if (!carOn)
         const Padding(
           padding: EdgeInsets.only(top: 8),
-          child: Text('Reading values needs the car on (about 13 V or more). '
+          child: Text('Reading values needs the car on (about 12.8 V or more). '
               'Nothing is sent on the bus while the car is off.'),
         ),
       if (c.busy) const LinearProgressIndicator(),
