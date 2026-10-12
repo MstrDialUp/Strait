@@ -12,6 +12,9 @@ import 'package:ocean_obd/platform/gps_fix.dart';
 import 'package:ocean_obd/signals/signal_table.dart';
 import 'package:ocean_obd/ui/connect_controller.dart';
 
+/// GPS fixes less accurate than this don't count as evidence of driving.
+const maxGpsAccuracyM = 50.0;
+
 /// Drives the ABRP tab (PLAN.md §5): credentials, and the live link that
 /// polls the car and uploads to ABRP.
 class LinkController extends ChangeNotifier {
@@ -119,7 +122,16 @@ class LinkController extends ChangeNotifier {
     };
     final uploader = _uploader = AbrpUploader(client: client, snapshot: vehicle.snapshot)
       ..onUpdate = _throttledNotify;
-    _gpsSub = _gps().listen(vehicle.updateGps, onError: (_) {});
+    _gpsSub = _gps().listen((fix) {
+      vehicle.updateGps(fix);
+      // Driving keeps the bus gate open even if ATRV reads just under 13 V
+      // (PLAN.md §5.4). The adapter is in BLE range, so the phone is in the
+      // car.
+      final kmh = fix.speedKmh;
+      if (kmh != null && (fix.accuracyM ?? 0) <= maxGpsAccuracyM) {
+        connect.uds?.elm.transport.gate.recordSpeed(kmh);
+      }
+    }, onError: (_) {});
 
     final fgsError = await Background.start('abrp', 'Sending live data to ABRP');
     if (fgsError != null) error = 'Background service: $fgsError';

@@ -205,7 +205,7 @@ class _LinkScreenState extends State<LinkScreen> {
               const SizedBox(height: 8),
               _row('Car', poller == null
                   ? '—'
-                  : '${poller.carOn ? 'on' : 'off'}'
+                  : '${poller.carOn ? (poller.driving ? 'on (driving)' : 'on') : 'off'}'
                       '${poller.volts == null ? '' : ' (${poller.volts!.toStringAsFixed(1)} V)'}'
                       ' · ${poller.status}'),
               _row('ABRP', '${up?.status ?? '—'}'

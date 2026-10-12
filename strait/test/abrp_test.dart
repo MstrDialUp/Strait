@@ -317,12 +317,14 @@ void main() {
       '222050': '7E9056220500300',
       '223409': '7C907623409003B3350',
     };
+    // Parked (0 km/h), so only the voltage decides.
+    final parkedReplies = {...onReplies}..['22EFF7'] = '7CA0562EFF70000';
 
     test('one low voltage reading does not turn the car off', () async {
       final atrv = ['14.0V', '12.6V', '13.9V'];
       var atrvCount = 0;
       final fake = FakeElm(
-        replies: {...onReplies},
+        replies: {...parkedReplies},
         handler: (cmd) {
           if (cmd != 'ATRV') return null;
           final i = atrvCount++;
@@ -355,7 +357,7 @@ void main() {
     test('three low readings in a row turn the car off, without bus traffic', () async {
       var low = false;
       final fake = FakeElm(
-        replies: {...onReplies},
+        replies: {...parkedReplies},
         handler: (cmd) => cmd == 'ATRV' ? (low ? '12.4V' : '14.0V') : null,
       );
       final uds = UdsClient(ElmClient(ElmTransport(fake, minBusInterval: Duration.zero)));
@@ -426,6 +428,59 @@ void main() {
       await waitFor(() => poller.stats.reads > reads + 2);
       expect(poller.stats.carOn, isTrue);
       expect(fake.sent.where((c) => c == 'ATRV').length, greaterThan(atrv));
+      expect(poller.stats.events.map((e) => e.message), isNot(contains('Car off')));
+      poller.stop();
+      await done;
+    });
+
+    test('driving (GPS speed) polls although ATRV reads 12.9 V', () async {
+      final fake = FakeElm(replies: {'ATRV': '12.9V', ...onReplies});
+      final elm = ElmClient(ElmTransport(fake, minBusInterval: Duration.zero));
+      final uds = UdsClient(elm);
+      final state = VehicleState();
+      final poller = LivePoller(
+        uds: () => uds,
+        signals: table.signals,
+        state: state,
+        intervalOf: (_) => const Duration(milliseconds: 20),
+        carOffRecheck: const Duration(minutes: 1),
+      );
+      final done = poller.run();
+      await waitFor(() => poller.stats.status.startsWith('Car off'));
+      expect(fake.sent.where((c) => !c.startsWith('AT')), isEmpty);
+      elm.transport.gate.recordSpeed(48); // a GPS fix, as LinkController feeds it
+      await waitFor(() => state.value('soc') != null);
+      expect(poller.stats.carOn, isTrue);
+      expect(poller.stats.driving, isTrue);
+      expect(state.snapshot(), isNotNull);
+      expect(poller.stats.events.map((e) => e.message),
+          contains(startsWith('Driving (48 km/h): polling although ATRV reads 12.9 V')));
+      poller.stop();
+      await done;
+    });
+
+    test("the car's own speed keeps the link on when ATRV drops under 13 V", () async {
+      var volts = '14.0V';
+      final fake = FakeElm(
+        replies: {...onReplies},
+        handler: (cmd) => cmd == 'ATRV' ? volts : null,
+      );
+      final uds = UdsClient(ElmClient(ElmTransport(fake, minBusInterval: Duration.zero)));
+      final poller = LivePoller(
+        uds: () => uds,
+        signals: table.signals,
+        state: VehicleState(),
+        intervalOf: (_) => const Duration(milliseconds: 20),
+        voltageEvery: const Duration(milliseconds: 30),
+        lowVoltageRecheck: const Duration(milliseconds: 5),
+      );
+      final done = poller.run();
+      await waitFor(() => poller.stats.carOn && uds.elm.transport.gate.moving); // 65.5 km/h read
+      volts = '12.9V';
+      final atrv = fake.sent.where((c) => c == 'ATRV').length;
+      await waitFor(() => fake.sent.where((c) => c == 'ATRV').length >= atrv + 4);
+      expect(poller.stats.carOn, isTrue);
+      expect(poller.stats.driving, isTrue);
       expect(poller.stats.events.map((e) => e.message), isNot(contains('Car off')));
       poller.stop();
       await done;
