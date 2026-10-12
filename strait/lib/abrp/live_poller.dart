@@ -16,6 +16,9 @@ class LinkEvent {
 class LivePollerStats {
   double? volts;
   bool carOn = false;
+
+  /// On only because the car is driving, with ATRV under the threshold.
+  bool driving = false;
   int reads = 0;
   int noResponses = 0;
   DateTime? carOffSince;
@@ -33,7 +36,9 @@ class LivePollerStats {
 /// Nothing goes on the bus unless ATRV shows the car on. While the car is
 /// on, a low or unreadable ATRV pauses polling and is re-checked every
 /// [lowVoltageRecheck]; the car only counts as off after [offConfirmations]
-/// such readings in a row. While the car is off, ATRV is re-read every
+/// such readings in a row. Driving (BusGate.moving) also counts as on, so a
+/// 12 V supply just under the threshold doesn't stop the link on the move.
+/// The car's own speed readings feed that. While the car is off, ATRV is re-read every
 /// [carOffRecheck], or sooner if another screen gets a car-on reading;
 /// after [carOffTimeout] of the car being off, [run] returns and
 /// [onCarOffTimeout] fires so the caller can disconnect the adapter. A run
@@ -84,6 +89,7 @@ class LivePoller {
   UdsClient? _lastUds;
   int _streak = 0;
   int _lowReadings = 0;
+  bool? _onByVoltage;
 
   Future<void> run() async {
     _stopping = false;
@@ -185,7 +191,10 @@ class LivePoller {
         case ReadValue(:final data):
           _streak = 0;
           final v = s.decode(data);
-          if (v is double) state.update(s.abrpField!, v);
+          if (v is double) {
+            state.update(s.abrpField!, v);
+            if (s.abrpField == 'speed') u.elm.transport.gate.recordSpeed(v);
+          }
         case ReadNegative():
           _streak = 0;
         case ReadNoResponse():
@@ -223,8 +232,16 @@ class LivePoller {
     _lastVoltage = _clock();
     final gate = u.elm.transport.gate;
     if (gate.isOpen) {
-      if (failure != null) _log('$failure; the last reading is still recent');
-      if (!stats.carOn) _log('Car on (${_volts(gate.lastVolts)})');
+      if (failure != null && gate.voltageOn) _log('$failure; the last reading is still recent');
+      final byVoltage = gate.voltageOn;
+      if (!stats.carOn || byVoltage != _onByVoltage) {
+        _log(byVoltage
+            ? 'Car on (${_volts(gate.lastVolts)})'
+            : 'Driving (${gate.lastMovingKmh?.round() ?? '?'} km/h): polling although '
+                'ATRV reads ${failure ?? _volts(stats.volts)}');
+      }
+      _onByVoltage = byVoltage;
+      stats.driving = !byVoltage;
       stats.carOn = true;
       _lowReadings = 0;
       return;
@@ -236,6 +253,8 @@ class LivePoller {
         '($_lowReadings of $offConfirmations)');
     if (_lowReadings >= offConfirmations) {
       stats.carOn = false;
+      stats.driving = false;
+      _onByVoltage = null;
       _log('Car off');
     }
   }

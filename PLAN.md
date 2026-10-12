@@ -256,9 +256,10 @@ While the phone is near the car the dongle is always advertising, so the app can
 
 ### 5.4 Keeping the car asleep (dongle stays plugged in)
 - The app first reads the adapter's own supply voltage with `ATRV`. This reads the voltage at the OBD port pin and sends **nothing on the CAN bus**.
-- Around 13.0 V or higher means the DC-DC converter is running: the car is on or charging. Below that, the car is off.
+- 12.8 V or higher means the DC-DC converter is running: the car is on or charging. Below that, the car is off. (The threshold was 13.0 V until `ATRV` read 12.9 V for a whole drive on 2026-10-11.)
 - Car on: start polling and uploading.
-- Implemented in `transport/bus_gate.dart`: every bus command (hex requests and `ATMA`) is refused unless the latest `ATRV` reading is ≥ 13.0 V and at most 90 s old. `AT` setup commands are never gated because they don't reach the bus.
+- Implemented in `transport/bus_gate.dart`: every bus command (hex requests and `ATMA`) is refused unless the latest `ATRV` reading is ≥ 12.8 V and at most 90 s old, or the car is driving. `AT` setup commands are never gated because they don't reach the bus.
+- Driving counts as on: a speed of ≥ 10 km/h from the car's own speed reading (VCU EFF7) keeps the gate open for 2 minutes after the last such reading, so stops at lights don't close it. Phone GPS speed is deliberately not used. A parked car can't renew it, so it can't keep the car awake for more than 2 minutes after parking.
 - Car off: send nothing on the bus. Re-check `ATRV` every 60 s, then disconnect BLE after 10 minutes. A car-on reading taken elsewhere (e.g. "Re-check voltage") ends the 60 s wait early.
 - While the ABRP link is polling, one low or unreadable `ATRV` pauses polling (nothing is sent on the bus) and is re-checked every 5 s; the car only counts as off after 3 such readings in a row. The link keeps a short event log on the ABRP tab saying why it called the car off.
 - The Connect screen re-reads `ATRV` every 30 s while connected (skipped if another screen read it in the last 30 s), so its car-on reading doesn't go stale after 90 s.

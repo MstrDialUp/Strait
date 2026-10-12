@@ -108,15 +108,46 @@ void main() {
       expect(g.isOpen, isFalse);
     });
 
-    test('threshold is inclusive at 13.0 V', () {
-      final g = BusGate()..recordVoltage(13.0);
+    test('threshold is inclusive at 12.8 V', () {
+      final g = BusGate()..recordVoltage(12.9); // seen while driving
       expect(g.isOpen, isTrue);
-      g.recordVoltage(12.99);
+      g.recordVoltage(12.8);
+      expect(g.isOpen, isTrue);
+      g.recordVoltage(12.79);
       expect(g.isOpen, isFalse);
     });
 
     test('close() forces the gate shut', () {
       final g = BusGate()..recordVoltage(14);
+      g.close();
+      expect(g.isOpen, isFalse);
+    });
+
+    test('driving opens the gate even with the voltage under the threshold', () {
+      var now = DateTime(2026, 10, 11, 8);
+      final g = BusGate(clock: () => now)..recordVoltage(12.6);
+      expect(g.isOpen, isFalse);
+      g.recordSpeed(9.9); // below movingKmh: not evidence of driving
+      expect(g.isOpen, isFalse);
+      g.recordSpeed(45);
+      expect(g.isOpen, isTrue);
+      expect(g.voltageOn, isFalse);
+      expect(g.moving, isTrue);
+    });
+
+    test('the driving hold outlasts a stop, then runs out', () {
+      var now = DateTime(2026, 10, 11, 8);
+      final g = BusGate(clock: () => now, motionHold: const Duration(minutes: 2));
+      g.recordSpeed(50);
+      now = now.add(const Duration(seconds: 90));
+      g.recordSpeed(0); // stopped at lights: doesn't renew, doesn't close
+      expect(g.isOpen, isTrue);
+      now = now.add(const Duration(seconds: 31));
+      expect(g.isOpen, isFalse);
+    });
+
+    test('close() also clears the driving hold', () {
+      final g = BusGate()..recordSpeed(60);
       g.close();
       expect(g.isOpen, isFalse);
     });
