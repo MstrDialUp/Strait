@@ -26,7 +26,19 @@ These held for all the work below and should hold for any Ocean app:
 - **Rate.** Leave at least about 85 ms between bus requests (≈12 per second at most).
 
 ## 2. Adapter and connection
-**Bluetooth.** ELM327 BLE adapters expose a UART-like GATT service: one characteristic to write commands to, one to get notifications from. UUIDs differ between adapters (common ones are FFF0/FFF1/FFF2, FFE0/FFE1 and 18F0/2AF0/2AF1), so the app picks the first service that has both a notify and a write characteristic, preferring FFF0, FFE0 and 18F0 (`transport/ble_uart_link.dart`). The vLinker FD+'s exact UUIDs are shown on the app's Car tab ("BLE link") and are *to be recorded here*. Commands are ASCII ending in `\r`, and a reply is complete when the `>` prompt arrives. Writes are chunked to 20 bytes.
+**Bluetooth.** ELM327 BLE adapters expose a UART-like GATT service: one characteristic to write commands to, one to get notifications from. UUIDs differ between adapters (common ones are FFF0/FFF1/FFF2, FFE0/FFE1 and 18F0/2AF0/2AF1), so the app picks the first service that has both a notify and a write characteristic, preferring 18F0, FFF0 and FFE0 (`transport/ble_uart_link.dart`).
+
+The **vLinker FD+** uses 16-bit UUIDs on the Bluetooth base UUID (`0000xxxx-0000-1000-8000-00805f9b34fb`):
+
+| Role | UUID |
+|---|---|
+| Service | `18F0` |
+| Write (commands to the adapter) | `2AF1` |
+| Notify (replies from the adapter) | `2AF0` |
+
+Read from the Car tab's "BLE link" line on 2026-09-30.
+
+Commands are ASCII ending in `\r`, and a reply is complete when the `>` prompt arrives. Writes are chunked to 20 bytes.
 
 **Setup sequence** (all adapter-local, nothing on the bus):
 
@@ -121,7 +133,6 @@ Seen in recordings but not confirmed. The catalog marks these "(observed)" or "(
 3. **Tyre pressure scale and wheel order:** read the four dash values next to BCM 3427.
 4. **Gear:** a stationary P → D → N → R → P test while recording; if nothing follows it, sweep the VCU over 0x0000–0xFFFF (≈1.5 h at the rate cap).
 5. **Live data on VCU, MCU, OHC, PDU and ECC:** wider sweeps (for example `0100–1FFF`, `2200–33FF`, `3500–CFFF`, `D200–EEFF`, `F200–FCFF`). A full 64 K sweep per module is feasible because the sweep resumes.
-6. **BLE UUIDs of the vLinker FD+:** record them in §2.
 
 ## 9. How to reproduce or extend this
 1. Install **Ocean Discovery** (`discovery/`) and connect to the adapter on its Connect tab.

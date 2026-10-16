@@ -5,9 +5,9 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'byte_link.dart';
 
 /// ELM327-over-BLE "UART": one characteristic we write commands to and one we
-/// get notifications from. Adapters differ in UUIDs (FFF0/FFF1/FFF2,
-/// FFE0/FFE1, 18F0/2AF0/2AF1, vendor 128-bit), so the pair is discovered
-/// rather than hard-coded, preferring a service that has both.
+/// get notifications from. Adapters differ in UUIDs (18F0/2AF1/2AF0 on the
+/// vLinker FD+, FFF0/FFF1/FFF2, FFE0/FFE1, vendor 128-bit), so the pair is
+/// discovered rather than hard-coded, preferring a service that has both.
 class BleUartLink implements ByteLink {
   BleUartLink._(this.device, this.writeChar, this.notifyChar, this._sub, this._controller);
 
@@ -21,7 +21,8 @@ class BleUartLink implements ByteLink {
   String get description =>
       'svc ${writeChar.serviceUuid.str} write ${writeChar.uuid.str} notify ${notifyChar.uuid.str}';
 
-  static const _preferredServices = ['fff0', 'ffe0', '18f0'];
+  // 18F0 (write 2AF1, notify 2AF0) is the vLinker FD+'s service.
+  static const _preferredServices = ['18f0', 'fff0', 'ffe0'];
   static const _ignoredServices = ['1800', '1801', '180a', '180f'];
 
   static Future<BleUartLink> connect(BluetoothDevice device) async {
